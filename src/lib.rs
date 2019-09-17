@@ -53,6 +53,8 @@ pub struct StatsAlloc<T: GlobalAlloc> {
     bytes_allocated: AtomicUsize,
     bytes_deallocated: AtomicUsize,
     bytes_reallocated: AtomicIsize,
+    bytes_current_used: AtomicUsize,
+    bytes_max_used: AtomicUsize,
     inner: T,
 }
 
@@ -87,6 +89,16 @@ pub struct Stats {
     /// positive value indicates that resizable structures are growing, while
     /// a negative value indicates that such structures are shrinking.
     pub bytes_reallocated: isize,
+
+    /// The number of Bytes currently reserved/used 
+    /// 
+    /// This number is computed by bytes_allocated + max(0,bytes_reallocated) - bytes_deallocated
+    pub bytes_current_used: usize,
+
+    /// Maximum of used bytes since allocator initialation 
+    pub bytes_max_used: usize,
+
+    
 }
 
 /// An instrumented instance of the system allocator.
@@ -97,6 +109,8 @@ pub static INSTRUMENTED_SYSTEM: StatsAlloc<System> = StatsAlloc {
     bytes_allocated: AtomicUsize::new(0),
     bytes_deallocated: AtomicUsize::new(0),
     bytes_reallocated: AtomicIsize::new(0),
+    bytes_current_used: AtomicUsize::new(0),
+    bytes_max_used: AtomicUsize::new(0),
     inner: System,
 };
 
@@ -110,6 +124,8 @@ impl StatsAlloc<System> {
             bytes_allocated: AtomicUsize::new(0),
             bytes_deallocated: AtomicUsize::new(0),
             bytes_reallocated: AtomicIsize::new(0),
+            bytes_current_used: AtomicUsize::new(0),
+            bytes_max_used: AtomicUsize::new(0),
             inner: System,
         }
     }
@@ -127,6 +143,8 @@ impl<T: GlobalAlloc> StatsAlloc<T> {
             bytes_allocated: AtomicUsize::new(0),
             bytes_deallocated: AtomicUsize::new(0),
             bytes_reallocated: AtomicIsize::new(0),
+            bytes_current_used: AtomicUsize::new(0),
+            bytes_max_used: AtomicUsize::new(0),
             inner,
         }
     }
@@ -142,6 +160,8 @@ impl<T: GlobalAlloc> StatsAlloc<T> {
             bytes_allocated: AtomicUsize::new(0),
             bytes_deallocated: AtomicUsize::new(0),
             bytes_reallocated: AtomicIsize::new(0),
+            bytes_current_used: AtomicUsize::new(0),
+            bytes_max_used: AtomicUsize::new(0),
             inner,
         }
     }
@@ -155,6 +175,8 @@ impl<T: GlobalAlloc> StatsAlloc<T> {
             bytes_allocated: self.bytes_allocated.load(Ordering::SeqCst),
             bytes_deallocated: self.bytes_deallocated.load(Ordering::SeqCst),
             bytes_reallocated: self.bytes_reallocated.load(Ordering::SeqCst),
+            bytes_current_used: self.bytes_current_used.load(Ordering::SeqCst),
+            bytes_max_used: self.bytes_max_used.load(Ordering::SeqCst),
         }
     }
 }
@@ -176,6 +198,9 @@ impl ops::SubAssign for Stats {
         self.bytes_allocated -= rhs.bytes_allocated;
         self.bytes_deallocated -= rhs.bytes_deallocated;
         self.bytes_reallocated -= rhs.bytes_reallocated;
+
+        self.bytes_current_used = self.bytes_allocated + self.bytes_reallocated.max(0) as usize - self.bytes_deallocated;
+        self.bytes_max_used = self.bytes_max_used.max(self.bytes_current_used);
     }
 }
 
