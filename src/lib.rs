@@ -36,6 +36,7 @@
 )]
 #![cfg_attr(feature = "nightly", feature(const_fn))]
 #![cfg_attr(feature = "docs-rs", feature(allocator_api))]
+#![feature(atomic_min_max)]
 
 use std::{
     alloc::{GlobalAlloc, Layout, System},
@@ -199,8 +200,7 @@ impl ops::SubAssign for Stats {
         self.bytes_deallocated -= rhs.bytes_deallocated;
         self.bytes_reallocated -= rhs.bytes_reallocated;
 
-        self.bytes_current_used = (self.bytes_allocated as isize + self.bytes_reallocated - self.bytes_deallocated as isize) as usize;
-        self.bytes_max_used = self.bytes_max_used.max(self.bytes_current_used);
+        self.bytes_max_used -= rhs.bytes_max_used;
     }
 }
 
@@ -277,18 +277,30 @@ unsafe impl<T: GlobalAlloc> GlobalAlloc for StatsAlloc<T> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.allocations.fetch_add(1, Ordering::SeqCst);
         self.bytes_allocated.fetch_add(layout.size(), Ordering::SeqCst);
+
+        self.bytes_current_used.fetch_add(layout.size(), Ordering::SeqCst);
+        self.bytes_max_used.fetch_max(self.bytes_current_used.load(Ordering::SeqCst), Ordering::SeqCst);
+
         self.inner.alloc(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         self.deallocations.fetch_add(1, Ordering::SeqCst);
         self.bytes_deallocated.fetch_add(layout.size(), Ordering::SeqCst);
+
+        self.bytes_current_used.fetch_sub(layout.size(), Ordering::SeqCst);
+        self.bytes_max_used.fetch_max(self.bytes_current_used.load(Ordering::SeqCst), Ordering::SeqCst);
+
         self.inner.dealloc(ptr, layout)
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         self.allocations.fetch_add(1, Ordering::SeqCst);
         self.bytes_allocated.fetch_add(layout.size(), Ordering::SeqCst);
+
+        self.bytes_current_used.fetch_add(layout.size(), Ordering::SeqCst);
+        self.bytes_max_used.fetch_max(self.bytes_current_used.load(Ordering::SeqCst), Ordering::SeqCst);
+
         self.inner.alloc_zeroed(layout)
     }
 
@@ -297,12 +309,19 @@ unsafe impl<T: GlobalAlloc> GlobalAlloc for StatsAlloc<T> {
         if new_size > layout.size() {
             let difference = new_size - layout.size();
             self.bytes_allocated.fetch_add(difference, Ordering::SeqCst);
+
+            self.bytes_current_used.fetch_add(difference, Ordering::SeqCst);
         } else if new_size < layout.size() {
             let difference = layout.size() - new_size;
             self.bytes_deallocated.fetch_add(difference, Ordering::SeqCst);
+
+            self.bytes_current_used.fetch_sub(difference, Ordering::SeqCst);
         }
         self.bytes_reallocated
             .fetch_add(new_size.wrapping_sub(layout.size()) as isize, Ordering::SeqCst);
+
+        self.bytes_max_used.fetch_max(self.bytes_current_used.load(Ordering::SeqCst), Ordering::SeqCst);
+
         self.inner.realloc(ptr, layout, new_size)
     }
 }
