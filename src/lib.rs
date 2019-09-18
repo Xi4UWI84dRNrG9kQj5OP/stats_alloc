@@ -201,7 +201,7 @@ impl ops::SubAssign for Stats {
         self.bytes_reallocated -= rhs.bytes_reallocated;
 
         self.bytes_current_used -= rhs.bytes_current_used;
-        self.bytes_max_used -= rhs.bytes_max_used;
+        self.bytes_max_used = self.bytes_current_used.max(self.bytes_max_used);
     }
 }
 
